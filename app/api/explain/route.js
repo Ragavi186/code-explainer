@@ -5,36 +5,63 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 export async function POST(req) {
   try {
-    const { code } = await req.json();
+    const { code, image } = await req.json();
 
-    if (!code) {
-      return NextResponse.json({ error: "Code is required" }, { status: 400 });
+    if (!code && !image) {
+      return NextResponse.json({ error: "Code or image is required" }, { status: 400 });
     }
 
-    const prompt = `You are an expert programming tutor. Analyze this code snippet and return ONLY a valid JSON object without markdown formatting:
-{
-  "language": "Identified Programming Language",
-  "summary": "What this code does in 2 simple sentences",
-  "purpose": "Why and where developers use this code in real projects",
-  "logicSteps": [
-    "Step 1: Simple explanation",
-    "Step 2: Simple explanation"
-  ]
-}
+    let promptContent = [];
 
-Code:
-${code}`;
+    if (image) {
+      const [mimeTypePart, base64Data] = image.split(',');
+      const mimeType = mimeTypePart.match(/:(.*?);/)[1];
+      
+      promptContent.push({
+        inlineData: {
+          data: base64Data,
+          mimeType: mimeType
+        }
+      });
+      promptContent.push("Analyze the code provided in this image.");
+    }
+
+    if (code) {
+      promptContent.push(`Analyze this code snippet:\n${code}`);
+    }
+
+    promptContent.push(`
+Explain:
+1. What programming language it is
+2. What the code does in 2 simple sentences
+3. Why and where developers use this in real projects
+4. Step-by-step logic breakdown in plain terms.`);
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
+      model: "gemini-3.8-flash",
+      contents: promptContent,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: "OBJECT",
+          properties: {
+            language: { type: "STRING" },
+            summary: { type: "STRING" },
+            purpose: { type: "STRING" },
+            logicSteps: {
+              type: "ARRAY",
+              items: { type: "STRING" }
+            }
+          },
+          required: ["language", "summary", "purpose", "logicSteps"]
+        }
+      }
     });
 
-    const cleanJson = response.text.replace(/```json|```/g, "").trim();
-    const data = JSON.parse(cleanJson);
-
+    const data = JSON.parse(response.text);
     return NextResponse.json(data);
   } catch (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("API Route Error:", error);
+    return NextResponse.json({ error: error.message || "Failed to analyze code" }, { status: 500 });
   }
 }
